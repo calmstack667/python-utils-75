@@ -1,38 +1,51 @@
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+import functools
+import time
+import collections
+from typing import Callable, Any
 
-T = TypeVar('T')
+def compose(*functions: Callable) -> Callable:
+    return functools.reduce(lambda f, g: lambda x: f(g(x)), functions, lambda x: x)
 
-def compose_pipelines(funcs: List[Callable[[Any], Any]]) -> Callable[[Any], Any]:
-    """Chain a sequence of functions into a single pipeline operation."""
-    def pipeline(data: Any) -> Any:
-        for func in funcs:
-            data = func(data)
-        return data
-    return pipeline
+def memoize_with_expiry(seconds: int) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        cache = {}
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            key = (args, frozenset(kwargs.items()))
+            now = time.time()
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < seconds:
+                    return result
+            result = func(*args, **kwargs)
+            cache[key] = (result, now)
+            return result
+        return wrapper
+    return decorator
 
-def batch_process(items: List[T], size: int) -> List[List[T]]:
-    """Partition an iterable into smaller chunks of defined size."""
-    return [items[i:i + size] for i in range(0, len(items), size)]
-
-def dict_deep_merge(base: Dict[Any, Any], update: Dict[Any, Any]) -> Dict[Any, Any]:
-    """Recursively merge two dictionaries using a nested update approach."""
-    result = base.copy()
-    for key, value in update.items():
-        if isinstance(value, dict) and key in result and isinstance(result[key], dict):
-            result[key] = dict_deep_merge(result[key], value)
+def deep_flatten(items: Any) -> list:
+    result = []
+    for item in items:
+        if isinstance(item, (list, tuple)):
+            result.extend(deep_flatten(item))
         else:
-            result[key] = value
+            result.append(item)
     return result
 
-class LazyValue:
-    """Container for deferred computation of values to optimize resource allocation."""
-    def __init__(self, func: Callable[[], T]) -> None:
-        self._func = func
-        self._value: Optional[T] = None
-        self._evaluated = False
+def flip_dict(d: dict) -> dict:
+    return {v: k for k, v in d.items()}
 
-    def get(self) -> T:
-        if not self._evaluated:
-            self._value = self._func()
-            self._evaluated = True
-        return self._value  # type: ignore
+def throttle(limit: int) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        calls = collections.deque()
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            now = time.time()
+            while calls and calls[0] < now - 1:
+                calls.popleft()
+            if len(calls) < limit:
+                calls.append(now)
+                return func(*args, **kwargs)
+            raise RuntimeError("rate limit exceeded")
+        return wrapper
+    return decorator
